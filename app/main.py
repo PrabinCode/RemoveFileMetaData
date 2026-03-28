@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -20,6 +21,8 @@ from pydantic import BaseModel, Field
 
 SESSION_TTL = timedelta(hours=6)
 TAG_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]+$")
+APP_TEMP_ROOT = Path(tempfile.gettempdir()) / "remove-file-metadata"
+UPLOAD_TEMP_ROOT = APP_TEMP_ROOT / "uploads"
 
 
 class FileSummary(BaseModel):
@@ -65,9 +68,27 @@ class StoredFile:
 
 class SessionStore:
     def __init__(self) -> None:
-        self.root = Path(tempfile.gettempdir()) / "remove-file-metadata"
+        self.root = UPLOAD_TEMP_ROOT
         self.root.mkdir(parents=True, exist_ok=True)
         self._files: dict[str, StoredFile] = {}
+
+    def clear_all(self) -> None:
+        self._files.clear()
+        shutil.rmtree(self.root, ignore_errors=True)
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def cleanup_legacy_layout(self) -> None:
+        # Older builds stored upload sessions directly under APP_TEMP_ROOT.
+        if not APP_TEMP_ROOT.exists():
+            return
+
+        for child in APP_TEMP_ROOT.iterdir():
+            if not child.is_dir():
+                continue
+            if child.name in {"uploads", "exiftool-runtime"}:
+                continue
+            if re.fullmatch(r"[0-9a-f]{32}", child.name):
+                shutil.rmtree(child, ignore_errors=True)
 
     def cleanup(self) -> None:
         now = datetime.now(timezone.utc)
@@ -122,63 +143,185 @@ class SessionStore:
 
 class ExifToolService:
     def __init__(self) -> None:
-        self.binary = self._find_binary()
+        self._perl_required_but_missing = False
+        self._probe_errors: list[str] = []
+        self.command = self._find_command()
+
+    def _candidate_from_bundle(self, candidate: Path) -> bool:
+        if not getattr(sys, "frozen", False):
+            return False
+
+        bundle_root = getattr(sys, "_MEIPASS", None)
+        if not bundle_root:
+            return False
+
+        bundle_path = Path(bundle_root).resolve()
+        candidate_path = candidate.resolve()
+
+        try:
+            return candidate_path.is_relative_to(bundle_path)
+        except ValueError:
+            return False
+
+    def _prepare_executable_candidate(self, candidate: Path) -> Path:
+        if not self._candidate_from_bundle(candidate):
+            return candidate
+
+        support_dir = candidate.parent / "exiftool_files"
+        if not support_dir.exists() or not support_dir.is_dir():
+            return candidate
+
+        # The Windows ExifTool launcher may fail when executed directly from
+        # PyInstaller's _MEI extraction directory, so copy it to a stable temp location.
+        runtime_root = APP_TEMP_ROOT / "exiftool-runtime"
+        stamp = f"{candidate.stat().st_size}-{candidate.stat().st_mtime_ns}"
+        target_root = runtime_root / stamp
+        target_exe = target_root / candidate.name
+        target_support = target_root / "exiftool_files"
+        ready_marker = target_root / ".ready"
+
+        if not ready_marker.exists():
+            target_root.mkdir(parents=True, exist_ok=True)
+
+            if target_exe.exists():
+                target_exe.unlink()
+
+            if target_support.exists():
+                shutil.rmtree(target_support, ignore_errors=True)
+
+            shutil.copy2(candidate, target_exe)
+            shutil.copytree(support_dir, target_support)
+            ready_marker.write_text("ok", encoding="ascii")
+
+        return target_exe
+
+    def _command_works(self, command: list[str]) -> bool:
+        try:
+            completed = subprocess.run(
+                [*command, "-ver"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            self._probe_errors.append(str(exc))
+            return False
+
+        if completed.returncode == 0:
+            return True
+
+        message = completed.stderr.strip() or completed.stdout.strip() or f"Exit code {completed.returncode}"
+        self._probe_errors.append(message)
+        return False
 
     @staticmethod
-    def _find_binary() -> Optional[str]:
-        local_candidates: list[Path] = []
+    def _local_search_roots() -> list[Path]:
+        local_roots: list[Path] = []
 
         if getattr(sys, "frozen", False):
             bundle_root = getattr(sys, "_MEIPASS", None)
             if bundle_root:
-                local_candidates.extend(
+                local_roots.extend(
                     [
-                        Path(bundle_root) / "exiftool.exe",
-                        Path(bundle_root) / "exiftool",
+                        Path(bundle_root),
+                        Path(bundle_root) / "Image-ExifTool-13.53",
+                        Path(bundle_root) / "Image-ExifTool-13.53" / "Image-ExifTool-13.53",
                     ]
                 )
 
             executable_dir = Path(sys.executable).resolve().parent
-            local_candidates.extend(
+            local_roots.extend(
                 [
-                    executable_dir / "exiftool.exe",
-                    executable_dir / "exiftool",
+                    executable_dir,
+                    executable_dir / "Image-ExifTool-13.53",
+                    executable_dir / "Image-ExifTool-13.53" / "Image-ExifTool-13.53",
                 ]
             )
 
         project_root = Path(__file__).resolve().parents[1]
-        local_candidates.extend(
+        local_roots.extend(
             [
-                project_root / "exiftool.exe",
-                project_root / "exiftool",
+                project_root,
+                project_root / "Image-ExifTool-13.53",
+                project_root / "Image-ExifTool-13.53" / "Image-ExifTool-13.53",
             ]
         )
 
-        for candidate in local_candidates:
-            if candidate.exists() and candidate.is_file():
-                return str(candidate)
+        return local_roots
 
-        for candidate in ("exiftool", "exiftool.exe"):
+    def _find_command(self) -> Optional[list[str]]:
+        executable_names: tuple[str, ...]
+        if os.name == "nt":
+            executable_names = ("exiftool.exe", "exiftool(-k).exe")
+        else:
+            executable_names = ("exiftool", "exiftool.exe", "exiftool(-k).exe")
+
+        for root in self._local_search_roots():
+            for name in executable_names:
+                candidate = root / name
+                if candidate.exists() and candidate.is_file():
+                    prepared = self._prepare_executable_candidate(candidate)
+                    command = [str(prepared)]
+                    if self._command_works(command):
+                        return command
+
+        path_candidates: tuple[str, ...]
+        if os.name == "nt":
+            path_candidates = ("exiftool.exe", "exiftool(-k).exe", "exiftool")
+        else:
+            path_candidates = ("exiftool", "exiftool.exe", "exiftool(-k).exe")
+
+        for candidate in path_candidates:
             resolved = shutil.which(candidate)
             if resolved:
-                return resolved
+                command = [resolved]
+                if self._command_works(command):
+                    return command
+
+        for root in self._local_search_roots():
+            script_candidate = root / "exiftool"
+            if not script_candidate.exists() or not script_candidate.is_file():
+                continue
+
+            perl_path = shutil.which("perl")
+            if perl_path:
+                command = [perl_path, str(script_candidate)]
+                if self._command_works(command):
+                    return command
+
+            self._perl_required_but_missing = True
+            return None
+
         return None
 
     def ensure_available(self) -> None:
-        if self.binary:
+        if self.command:
             return
+
+        if self._perl_required_but_missing:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Found local ExifTool Perl source, but Perl is not available. "
+                    "Install Perl, or place exiftool.exe in the project root."
+                ),
+            )
+
         raise HTTPException(
             status_code=503,
             detail=(
                 "ExifTool is not available. Add exiftool to PATH, place exiftool.exe next "
                 "to the executable, or bundle it during build."
+                + (f" Last probe error: {self._probe_errors[0]}" if self._probe_errors else "")
             ),
         )
 
     def _run(self, args: list[str]) -> tuple[str, list[str]]:
         self.ensure_available()
+        command = [*(self.command or []), *args]
         completed = subprocess.run(
-            args,
+            command,
             capture_output=True,
             text=True,
             check=False,
@@ -199,7 +342,6 @@ class ExifToolService:
     def read_metadata(self, file_path: Path) -> dict[str, Any]:
         output, _warnings = self._run(
             [
-                self.binary or "exiftool",
                 "-j",
                 "-G1",
                 "-a",
@@ -224,16 +366,14 @@ class ExifToolService:
         return metadata
 
     def remove_all(self, file_path: Path) -> list[str]:
-        _output, warnings = self._run(
-            [self.binary or "exiftool", "-overwrite_original", "-all=", str(file_path)]
-        )
+        _output, warnings = self._run(["-overwrite_original", "-all=", str(file_path)])
         return warnings
 
     def remove_selected(self, file_path: Path, tags: list[str]) -> list[str]:
         if not tags:
             raise HTTPException(status_code=400, detail="No tags were provided.")
 
-        args = [self.binary or "exiftool", "-overwrite_original"]
+        args = ["-overwrite_original"]
 
         for tag in tags:
             cleaned = tag.strip()
@@ -245,7 +385,7 @@ class ExifToolService:
                 raise HTTPException(status_code=400, detail=f"Invalid tag name: {cleaned}")
             args.append(f"-{cleaned}=")
 
-        if len(args) == 2:
+        if len(args) == 1:
             raise HTTPException(status_code=400, detail="No valid tags were provided.")
 
         args.append(str(file_path))
@@ -256,7 +396,7 @@ class ExifToolService:
         if not updates:
             raise HTTPException(status_code=400, detail="No updates were provided.")
 
-        args = [self.binary or "exiftool", "-overwrite_original"]
+        args = ["-overwrite_original"]
 
         for tag, value in updates.items():
             cleaned = tag.strip()
@@ -268,7 +408,7 @@ class ExifToolService:
             normalized_value = "" if value is None else str(value)
             args.append(f"-{cleaned}={normalized_value}")
 
-        if len(args) == 2:
+        if len(args) == 1:
             raise HTTPException(status_code=400, detail="No valid updates were provided.")
 
         args.append(str(file_path))
@@ -290,11 +430,22 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def cleanup_temp_on_startup() -> None:
+    store.clear_all()
+    store.cleanup_legacy_layout()
+
+
+@app.on_event("shutdown")
+def cleanup_temp_on_shutdown() -> None:
+    store.clear_all()
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     return {
         "status": "ok",
-        "exiftool_available": exiftool.binary is not None,
+        "exiftool_available": exiftool.command is not None,
     }
 
 

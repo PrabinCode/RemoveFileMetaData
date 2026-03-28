@@ -13,14 +13,20 @@ It supports:
 
 ## 1. Prerequisites
 
-- Python 3.10+
-- [ExifTool](https://exiftool.org/) available on `PATH`
+- Python 3.9+
+- ExifTool command-line engine
+
+### ExifTool options (choose one)
+
+1. Place `exiftool.exe` in the project root.
+2. Keep the Windows ExifTool package in `Image-ExifTool-13.53` with `exiftool.exe` (or `exiftool(-k).exe`) inside.
+3. Put `exiftool` on your system `PATH`.
 
 ### Windows ExifTool setup
 
 1. Download ExifTool for Windows from [exiftool.org](https://exiftool.org/).
 2. Extract it and rename `exiftool(-k).exe` to `exiftool.exe`.
-3. Put the executable in a folder that is on your system `PATH`.
+3. Either place it in this project root or put it on your system `PATH`.
 4. Verify from terminal:
 
 ```powershell
@@ -32,6 +38,18 @@ exiftool -ver
 ```powershell
 pip install -r requirements.txt
 ```
+
+### Why these dependencies exist
+
+1. `fastapi` powers the local API.
+2. `uvicorn` runs the local server.
+3. `python-multipart` handles file uploads.
+4. `exiftool` is the metadata engine for images, videos, and PDFs.
+
+Without ExifTool, this app cannot reliably inspect and edit metadata across all these file types.
+
+If you only added `Image-ExifTool-13.53` source code (the `exiftool` Perl script), Perl is also required at runtime.
+If you want zero Perl dependency, use the Windows executable package that includes `exiftool.exe`.
 
 ## 3. Run locally
 
@@ -58,6 +76,7 @@ Open:
 ## Notes
 
 - The app stores uploaded files in a temporary folder during the current session.
+- Uploaded temp files are deleted automatically when the app starts and when it shuts down normally.
 - Sessions automatically expire after 6 hours.
 - Some format-specific tags are read-only and may not be writable; ExifTool warnings are shown in the status bar.
 
@@ -75,8 +94,9 @@ The generated file is:
 
 Build behavior:
 
-- If `exiftool` is available on your machine during build, it is bundled into the executable.
-- If `exiftool` is not found, the executable still builds, but ExifTool must exist on `PATH` when you run it.
+- The build script first looks for local `exiftool.exe` in your project folders and bundles it.
+- If no local binary is found, it falls back to `PATH`.
+- If only the source package script is found, you must install Perl or provide `exiftool.exe`.
 
 ## 6. Run The Executable
 
