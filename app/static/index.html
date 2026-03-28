@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Local Metadata Inspector</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-a"></div>
+    <div class="ambient ambient-b"></div>
+
+    <main class="shell">
+      <header class="hero reveal">
+        <p class="eyebrow">Offline-First Privacy Tool</p>
+        <h1>Local Metadata Inspector</h1>
+        <p class="subtitle">
+          View, search, remove, and edit metadata for images, videos, and PDFs directly on your own device.
+        </p>
+      </header>
+
+      <section class="layout">
+        <aside class="panel reveal" style="--delay: 60ms">
+          <h2>Files</h2>
+          <p class="muted">Choose one or many files to inspect.</p>
+
+          <label for="fileInput" class="dropzone" id="dropzone">
+            <span>Drop files here</span>
+            <strong>or click to browse</strong>
+          </label>
+          <input id="fileInput" type="file" multiple />
+
+          <button id="inspectBtn" class="primary">Inspect Files</button>
+
+          <ul id="fileList" class="file-list"></ul>
+        </aside>
+
+        <section class="panel reveal" style="--delay: 120ms">
+          <div class="panel-head">
+            <div>
+              <h2 id="selectedTitle">Metadata</h2>
+              <p class="muted" id="selectedHint">No file selected</p>
+            </div>
+
+            <div class="search-wrap">
+              <input id="tagSearch" type="text" placeholder="Search tags or values" />
+            </div>
+          </div>
+
+          <div class="action-bar">
+            <button id="removeAllBtn" class="danger" disabled>Remove All Metadata</button>
+            <button id="removeSelectedBtn" disabled>Remove Selected Tags</button>
+            <button id="saveUpdatesBtn" disabled>Save Edited Values</button>
+            <button id="resetBtn" disabled>Reset</button>
+            <button id="downloadBtn" class="primary" disabled>Download Current File</button>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th><input id="selectAll" type="checkbox" /></th>
+                  <th>Tag</th>
+                  <th>Value (editable)</th>
+                </tr>
+              </thead>
+              <tbody id="metadataRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <footer class="status reveal" style="--delay: 180ms" id="statusBar">
+        Ready
+      </footer>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
