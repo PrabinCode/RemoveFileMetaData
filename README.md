@@ -60,3 +60,28 @@ Open:
 - The app stores uploaded files in a temporary folder during the current session.
 - Sessions automatically expire after 6 hours.
 - Some format-specific tags are read-only and may not be writable; ExifTool warnings are shown in the status bar.
+
+## 5. Build One Executable (Windows)
+
+From the project root, run:
+
+```powershell
+.\build_exe.ps1
+```
+
+The generated file is:
+
+- `dist\MetadataInspector.exe`
+
+Build behavior:
+
+- If `exiftool` is available on your machine during build, it is bundled into the executable.
+- If `exiftool` is not found, the executable still builds, but ExifTool must exist on `PATH` when you run it.
+
+## 6. Run The Executable
+
+Double-click:
+
+- `dist\MetadataInspector.exe`
+
+It starts the local server and opens your browser automatically.

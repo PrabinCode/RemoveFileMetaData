@@ -4,12 +4,13 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,7 +25,7 @@ TAG_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]+$")
 class FileSummary(BaseModel):
     id: str
     name: str
-    content_type: str | None
+    content_type: Optional[str]
     size_bytes: int
     metadata: dict[str, Any]
 
@@ -55,7 +56,7 @@ class ActionResponse(BaseModel):
 class StoredFile:
     id: str
     original_name: str
-    content_type: str | None
+    content_type: Optional[str]
     size_bytes: int
     created_at: datetime
     source_path: Path
@@ -124,7 +125,39 @@ class ExifToolService:
         self.binary = self._find_binary()
 
     @staticmethod
-    def _find_binary() -> str | None:
+    def _find_binary() -> Optional[str]:
+        local_candidates: list[Path] = []
+
+        if getattr(sys, "frozen", False):
+            bundle_root = getattr(sys, "_MEIPASS", None)
+            if bundle_root:
+                local_candidates.extend(
+                    [
+                        Path(bundle_root) / "exiftool.exe",
+                        Path(bundle_root) / "exiftool",
+                    ]
+                )
+
+            executable_dir = Path(sys.executable).resolve().parent
+            local_candidates.extend(
+                [
+                    executable_dir / "exiftool.exe",
+                    executable_dir / "exiftool",
+                ]
+            )
+
+        project_root = Path(__file__).resolve().parents[1]
+        local_candidates.extend(
+            [
+                project_root / "exiftool.exe",
+                project_root / "exiftool",
+            ]
+        )
+
+        for candidate in local_candidates:
+            if candidate.exists() and candidate.is_file():
+                return str(candidate)
+
         for candidate in ("exiftool", "exiftool.exe"):
             resolved = shutil.which(candidate)
             if resolved:
@@ -137,8 +170,8 @@ class ExifToolService:
         raise HTTPException(
             status_code=503,
             detail=(
-                "ExifTool is not available on PATH. Install ExifTool and ensure `exiftool` "
-                "is executable from your terminal."
+                "ExifTool is not available. Add exiftool to PATH, place exiftool.exe next "
+                "to the executable, or bundle it during build."
             ),
         )
 
