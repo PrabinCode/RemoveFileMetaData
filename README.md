@@ -92,6 +92,10 @@ added pending change and remains available if you select another file. Click
 to download the saved working copy. If you leave the page or reload it before
 saving, pending changes are lost.
 
+New tag names must be recognized by ExifTool and supported by the file format.
+The application does not define a project-specific custom namespace. Use a
+standard tag or a namespace defined by the relevant metadata specification.
+
 Click the **!** icon beside the title to open the metadata tag guide. It lists
 the complete tag database from the installed ExifTool, including tag names,
 descriptions, metadata groups, value types, contextual example values, and
