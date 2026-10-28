@@ -4,8 +4,8 @@
 a = Analysis(
     ['run_local_app.py'],
     pathex=[],
-    binaries=[('E:\\Fun Projects\\RemoveFileMetaData\\exiftool.exe', '.')],
-    datas=[('app\\static', 'app\\static'), ('E:\\Fun Projects\\RemoveFileMetaData\\exiftool_files', 'exiftool_files')],
+    binaries=[('C:/Users/WATER/AppData/Local/Programs/ExifTool/ExifTool.exe', '.')],
+    datas=[('app/static', 'app/static'), ('C:/Users/WATER/AppData/Local/Programs/ExifTool/exiftool_files', 'exiftool_files')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
