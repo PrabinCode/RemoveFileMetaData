@@ -397,20 +397,11 @@ button.danger {
 
 .progress-bar {
   display: block;
-  width: 35%;
+  width: 0;
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
-  animation: progress-slide 1.15s ease-in-out infinite;
-}
-
-@keyframes progress-slide {
-  from {
-    transform: translateX(-120%);
-  }
-  to {
-    transform: translateX(320%);
-  }
+  transition: width 180ms ease;
 }
 
 .table-wrap {

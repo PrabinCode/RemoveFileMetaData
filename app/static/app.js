@@ -34,6 +34,7 @@ const presetSelect = document.getElementById("presetSelect");
 const applyPresetBtn = document.getElementById("applyPresetBtn");
 const batchProgress = document.getElementById("batchProgress");
 const progressLabel = batchProgress.querySelector(".progress-label");
+const progressBar = batchProgress.querySelector(".progress-bar");
 const dropzone = document.getElementById("dropzone");
 
 function bytesToLabel(bytes) {
@@ -531,8 +532,51 @@ async function applyBatchAction(url, body, successMessage) {
     return;
   }
 
+  const fileIds = getSelectedBatchIds();
+  const presetTags = {
+    location: [
+      "GPSLatitude", "GPSLongitude", "GPSAltitude", "GPSPosition",
+      "GPSDateStamp", "GPSTimeStamp", "GPSImgDirection", "GPSDestBearing",
+    ],
+    personal: [
+      "Artist", "Author", "Creator", "By-line", "By-lineTitle",
+      "OwnerName", "Copyright", "Comment", "Description",
+    ],
+    device: [
+      "Make", "Model", "SerialNumber", "CameraSerialNumber",
+      "LensModel", "LensSerialNumber", "Software", "HostComputer",
+    ],
+    timestamps: [
+      "DateTimeOriginal", "CreateDate", "ModifyDate", "FileModifyDate",
+      "FileCreateDate", "FileAccessDate", "MetadataDate",
+    ],
+  };
+  let perFileUrl = url;
+  let perFileBody = () => body;
+  if (url.endsWith("/batch/remove_all")) {
+    perFileUrl = (fileId) => `/api/files/${fileId}/remove_all`;
+    perFileBody = () => ({});
+  } else if (url.endsWith("/batch/remove_selected")) {
+    perFileUrl = (fileId) => `/api/files/${fileId}/remove_selected`;
+    perFileBody = () => ({ tags: body.tags });
+  } else if (url.endsWith("/batch/update_tags")) {
+    perFileUrl = (fileId) => `/api/files/${fileId}/update_tags`;
+    perFileBody = () => ({ updates: body.updates });
+  } else if (url.endsWith("/batch/reset")) {
+    perFileUrl = (fileId) => `/api/files/${fileId}/reset`;
+    perFileBody = () => ({});
+  } else if (url.endsWith("/batch/preset") && body.preset) {
+    perFileUrl = (fileId) =>
+      body.preset === "all"
+        ? `/api/files/${fileId}/remove_all`
+        : `/api/files/${fileId}/remove_selected`;
+    perFileBody = () =>
+      body.preset === "all" ? {} : { tags: presetTags[body.preset] || [] };
+  }
+
   batchProgress.hidden = false;
-  progressLabel.textContent = `Processing ${getSelectedBatchIds().length} selected file(s)...`;
+  progressLabel.textContent = `Processing 0 of ${fileIds.length} selected files...`;
+  progressBar.style.width = "0%";
   batchRemoveAllBtn.disabled = true;
   batchRemoveSelectedBtn.disabled = true;
   batchSaveUpdatesBtn.disabled = true;
@@ -541,19 +585,33 @@ async function applyBatchAction(url, body, successMessage) {
   applyPresetBtn.disabled = true;
 
   try {
-    const payload = await requestJson(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-    const updatedFiles = payload.files || [];
-    state.files = state.files.map((file) => {
-      const match = updatedFiles.find((updated) => updated.id === file.id);
-      return match || file;
-    });
+    const warnings = [];
+    const errors = [];
+    let completed = 0;
+    for (const fileId of fileIds) {
+      try {
+        const payload = await requestJson(perFileUrl(fileId), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(perFileBody(fileId)),
+        });
+        const updated = payload.file;
+        const index = state.files.findIndex((file) => file.id === updated.id);
+        if (index >= 0) {
+          state.files[index] = updated;
+        }
+        warnings.push(...(payload.warnings || []));
+      } catch (error) {
+        errors.push(`${fileId}: ${error.message}`);
+      } finally {
+        completed += 1;
+        const percent = Math.round((completed / fileIds.length) * 100);
+        progressBar.style.width = `${percent}%`;
+        progressLabel.textContent =
+          `Processed ${completed} of ${fileIds.length} selected files`;
+        renderFileList();
+      }
+    }
     state.selectedBatchIds = state.selectedBatchIds.filter((id) => state.files.some((file) => file.id === id));
 
     if (state.selectedFileId) {
@@ -567,9 +625,11 @@ async function applyBatchAction(url, body, successMessage) {
     renderFileList();
     renderMetadataRows();
 
-    if (payload.warnings && payload.warnings.length > 0) {
+    if (errors.length > 0) {
+      setStatus(`${successMessage} ${errors.length} file(s) failed.`, "error");
+    } else if (warnings.length > 0) {
       setStatus(
-        `${successMessage} Warnings: ${payload.warnings.join(" | ")}`,
+        `${successMessage} Warnings: ${warnings.join(" | ")}`,
         "error",
       );
     } else {
