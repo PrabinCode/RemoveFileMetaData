@@ -4,6 +4,7 @@ const state = {
   metadataEntries: [],
   pendingFiles: [],
   selectedBatchIds: [],
+  pendingTagUpdates: {},
 };
 
 const fileInput = document.getElementById("fileInput");
@@ -25,12 +26,152 @@ const statusBar = document.getElementById("statusBar");
 const comparisonSummary = document.getElementById("comparisonSummary");
 const comparisonDetails = document.getElementById("comparisonDetails");
 const showChangesOnly = document.getElementById("showChangesOnly");
+const newTagName = document.getElementById("newTagName");
+const newTagValue = document.getElementById("newTagValue");
+const addTagBtn = document.getElementById("addTagBtn");
+const tagInfoBtn = document.getElementById("tagInfoBtn");
+const tagInfoModal = document.getElementById("tagInfoModal");
+const closeTagInfoBtn = document.getElementById("closeTagInfoBtn");
+const tagReferenceSearch = document.getElementById("tagReferenceSearch");
+const tagReferenceGroup = document.getElementById("tagReferenceGroup");
+const tagReferenceWritable = document.getElementById("tagReferenceWritable");
+const tagReferenceCount = document.getElementById("tagReferenceCount");
+const tagReferenceRows = document.getElementById("tagReferenceRows");
+const tagReferencePrevious = document.getElementById("tagReferencePrevious");
+const tagReferenceNext = document.getElementById("tagReferenceNext");
+const tagReferencePage = document.getElementById("tagReferencePage");
 const presetSelect = document.getElementById("presetSelect");
 const applyPresetBtn = document.getElementById("applyPresetBtn");
 const batchProgress = document.getElementById("batchProgress");
 const progressLabel = batchProgress.querySelector(".progress-label");
 const progressBar = batchProgress.querySelector(".progress-bar");
 const dropzone = document.getElementById("dropzone");
+let tagReference = { items: [], page: 1, pageSize: 50, total: 0, groups: [] };
+let tagReferenceLoaded = false;
+let tagReferenceRequest = null;
+let tagReferenceSearchTimer = null;
+
+function setTagInfoModal(open) {
+  tagInfoModal.hidden = !open;
+  document.body.classList.toggle("modal-open", open);
+  if (open) {
+    closeTagInfoBtn.focus();
+    loadTagReference();
+  } else {
+    tagInfoBtn.focus();
+  }
+}
+
+function renderTagReference() {
+  const query = tagReferenceSearch.value.trim().toLowerCase();
+  const group = tagReferenceGroup.value;
+  const writableOnly = tagReferenceWritable.checked;
+  const filtered = tagReference.items.filter((item) => {
+    if (group && item.group !== group) {
+      return false;
+    }
+    if (writableOnly && !item.writable) {
+      return false;
+    }
+    if (!query) {
+      return true;
+    }
+    return [item.name, item.description, item.group, item.value_type]
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  });
+  const pageCount = Math.max(1, Math.ceil(filtered.length / tagReference.pageSize));
+  const page = Math.min(tagReference.page, pageCount);
+  tagReference.page = page;
+  const pageItems = filtered.slice(
+    (page - 1) * tagReference.pageSize,
+    page * tagReference.pageSize,
+  );
+
+  tagReferenceRows.innerHTML = "";
+  if (pageItems.length === 0) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 5;
+      cell.textContent = "No tags match this filter.";
+      row.appendChild(cell);
+      tagReferenceRows.appendChild(row);
+  } else {
+    pageItems.forEach((item) => {
+      const row = document.createElement("tr");
+      [item.name, item.example, item.description, item.group].forEach((value) => {
+        const cell = document.createElement("td");
+        cell.textContent = value;
+        row.appendChild(cell);
+      });
+      const supportCell = document.createElement("td");
+      supportCell.className = item.writable ? "writable" : "read-only";
+      supportCell.textContent = item.writable ? "Writable" : "Read-only";
+      supportCell.title = `ExifTool value type: ${item.value_type}`;
+      row.appendChild(supportCell);
+      tagReferenceRows.appendChild(row);
+    });
+  }
+
+  tagReferenceCount.textContent =
+    `${filtered.length.toLocaleString()} matching tags · ` +
+    `showing ${pageItems.length.toLocaleString()}`;
+  tagReferencePage.textContent = `Page ${page} of ${pageCount}`;
+  tagReferencePrevious.disabled = tagReference.page <= 1;
+  tagReferenceNext.disabled = tagReference.page >= pageCount;
+}
+
+async function loadTagReference() {
+  if (tagReferenceRequest) {
+    return tagReferenceRequest;
+  }
+
+  tagReferenceCount.textContent = "Loading bundled tag reference...";
+  tagReferenceRequest = fetch("/tag-reference.json")
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`Tag reference file could not be loaded (${response.status}).`);
+      }
+      return response.json();
+    })
+    .then((payload) => {
+      tagReference.items = payload.items || [];
+      tagReference.total = tagReference.items.length;
+      if (!tagReferenceLoaded) {
+        const groups = [...new Set(tagReference.items.map((item) => item.group))]
+          .sort((a, b) => a.localeCompare(b));
+        groups.forEach((group) => {
+          const option = document.createElement("option");
+          option.value = group;
+          option.textContent = group;
+          tagReferenceGroup.appendChild(option);
+        });
+        tagReferenceLoaded = true;
+      }
+      renderTagReference();
+    })
+    .catch((error) => {
+      tagReferenceCount.textContent = error.message;
+      tagReferenceRows.innerHTML = "";
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 5;
+      cell.textContent = "Could not load the ExifTool tag reference.";
+      row.appendChild(cell);
+      tagReferenceRows.appendChild(row);
+    })
+    .finally(() => {
+      tagReferenceRequest = null;
+    });
+  return tagReferenceRequest;
+}
+
+function resetTagReferencePage() {
+  tagReference.page = 1;
+  clearTimeout(tagReferenceSearchTimer);
+  tagReferenceSearchTimer = setTimeout(() => loadTagReference(), 250);
+}
 
 function bytesToLabel(bytes) {
   if (bytes < 1024) {
@@ -67,6 +208,7 @@ function setButtonsEnabled(enabled) {
   clearSelectionBtn.disabled = !enabled || state.selectedBatchIds.length === 0;
   presetSelect.disabled = !enabled || getActionFileIds().length === 0;
   applyPresetBtn.disabled = !enabled || getActionFileIds().length === 0;
+  addTagBtn.disabled = !enabled || !currentFile();
 }
 
 async function requestJson(url, options = {}) {
@@ -83,6 +225,47 @@ async function requestJson(url, options = {}) {
 
 function currentFile() {
   return state.files.find((item) => item.id === state.selectedFileId) || null;
+}
+
+function effectiveMetadata(file) {
+  if (!file) {
+    return {};
+  }
+
+  return {
+    ...(file.metadata || {}),
+    ...(state.pendingTagUpdates[file.id] || {}),
+  };
+}
+
+function originalMetadataValue(file, tag) {
+  const metadata = file?.original_metadata || {};
+  return Object.prototype.hasOwnProperty.call(metadata, tag)
+    ? metadata[tag]
+    : undefined;
+}
+
+function setPendingTagValue(file, tag, value) {
+  if (!file) {
+    return;
+  }
+
+  const original = metadataValueKey(originalMetadataValue(file, tag));
+  if (value === original) {
+    const pending = { ...(state.pendingTagUpdates[file.id] || {}) };
+    delete pending[tag];
+    if (Object.keys(pending).length === 0) {
+      delete state.pendingTagUpdates[file.id];
+    } else {
+      state.pendingTagUpdates[file.id] = pending;
+    }
+    return;
+  }
+
+  state.pendingTagUpdates[file.id] = {
+    ...(state.pendingTagUpdates[file.id] || {}),
+    [tag]: value,
+  };
 }
 
 function detectFileTypeLabel(fileName) {
@@ -111,6 +294,28 @@ function detectFileTypeLabel(fileName) {
   }
 
   return "File";
+}
+
+function fileTypeIcon(fileName) {
+  const type = detectFileTypeLabel(fileName);
+  const icons = {
+    Image: "▣",
+    Video: "▶",
+    PDF: "▤",
+    Audio: "♫",
+    Document: "▧",
+    Sheet: "▦",
+    Presentation: "▥",
+    File: "•",
+  };
+  return icons[type];
+}
+
+function displayFileName(fileName) {
+  if (fileName.length <= 40) {
+    return fileName;
+  }
+  return `${fileName.slice(0, 37)}...`;
 }
 
 function capabilityForFile(file) {
@@ -199,7 +404,10 @@ function renderComparisonDetails(file) {
     return;
   }
 
-  const diff = summarizeMetadataDiff(file.metadata || {}, file.original_metadata || {});
+  const diff = summarizeMetadataDiff(
+    effectiveMetadata(file),
+    file.original_metadata || {},
+  );
   if (diff.details.length === 0) {
     comparisonDetails.textContent = "No metadata values differ from the original upload.";
     return;
@@ -226,8 +434,11 @@ function renderComparisonSummary(file) {
     return;
   }
 
-  const diff = summarizeMetadataDiff(file.metadata || {}, file.original_metadata || {});
-  const currentTagCount = Object.keys(file.metadata || {}).length;
+  const diff = summarizeMetadataDiff(
+    effectiveMetadata(file),
+    file.original_metadata || {},
+  );
+  const currentTagCount = Object.keys(effectiveMetadata(file)).length;
   const originalTagCount = Object.keys(file.original_metadata || {}).length;
 
   comparisonSummary.textContent =
@@ -256,7 +467,7 @@ function getActionFileIds() {
 function renderFileList() {
   fileList.innerHTML = "";
 
-  state.files.forEach((file) => {
+  state.files.forEach((file, index) => {
     const li = document.createElement("li");
     if (file.id === state.selectedFileId) {
       li.classList.add("active");
@@ -272,28 +483,38 @@ function renderFileList() {
       toggleBatchSelection(file.id);
     });
 
+    const fileNumber = document.createElement("span");
+    fileNumber.className = "file-number";
+    fileNumber.textContent = `${index + 1}`;
+    fileNumber.title = `File ${index + 1}`;
+
     const main = document.createElement("div");
     main.className = "file-main";
 
     const title = document.createElement("strong");
-    title.textContent = file.name;
+    title.textContent = displayFileName(file.name);
+    title.title = file.name;
 
     const meta = document.createElement("span");
     meta.className = "meta";
-    const tagCount = Object.keys(file.metadata || {}).length;
+    const tagCount = Object.keys(effectiveMetadata(file)).length;
     meta.textContent = `${bytesToLabel(file.size_bytes)} · ${tagCount} tags`;
 
     const typeBadge = document.createElement("span");
     typeBadge.className = "file-type-badge";
-    typeBadge.textContent = detectFileTypeLabel(file.name);
-    typeBadge.title = capabilityForFile(file);
+    typeBadge.textContent = fileTypeIcon(file.name);
+    typeBadge.title = detectFileTypeLabel(file.name);
+    typeBadge.setAttribute("aria-label", detectFileTypeLabel(file.name));
     const capabilityBadge = document.createElement("span");
     capabilityBadge.className = "capability-badge";
     capabilityBadge.textContent =
-      capabilityForFile(file) === "Broad metadata support" ? "Broad" : "Partial";
+      capabilityForFile(file) === "Broad metadata support" ? "✓" : "!";
+    capabilityBadge.title = capabilityForFile(file);
+    capabilityBadge.setAttribute("aria-label", capabilityForFile(file));
 
     main.appendChild(title);
     main.appendChild(meta);
+    li.appendChild(fileNumber);
     li.appendChild(checkbox);
     li.appendChild(main);
     const badges = document.createElement("span");
@@ -316,10 +537,10 @@ function renderMetadataRows() {
 
   const file = currentFile();
   const diff = file
-    ? summarizeMetadataDiff(file.metadata || {}, file.original_metadata || {})
+    ? summarizeMetadataDiff(effectiveMetadata(file), file.original_metadata || {})
     : { details: [] };
   const changedTags = new Set(diff.details.map((item) => item.tag));
-  const visibleEntries = state.metadataEntries.filter(({ tag, value }) => {
+  const visibleEntries = normalizeMetadata(effectiveMetadata(file)).filter(({ tag, value }) => {
     if (showChangesOnly.checked && !changedTags.has(tag)) {
       return false;
     }
@@ -359,8 +580,15 @@ function renderMetadataRows() {
     const valueInput = document.createElement("input");
     valueInput.className = "tag-value";
     valueInput.dataset.tag = encodeURIComponent(tag);
-    valueInput.dataset.original = encodeURIComponent(value);
+    const originalValue = originalMetadataValue(file, tag);
+    valueInput.dataset.original = encodeURIComponent(metadataValueKey(originalValue));
     valueInput.value = value;
+    valueInput.addEventListener("input", () => {
+      setPendingTagValue(file, tag, valueInput.value);
+      updateSelectionHeader(file);
+      renderFileList();
+      setStatus("Unsaved metadata changes. Click Save Changes to write them to the file.");
+    });
     valueCell.appendChild(valueInput);
 
     row.appendChild(selectCell);
@@ -378,9 +606,12 @@ function updateSelectionHeader(file) {
     return;
   }
 
-  const tagCount = Object.keys(file.metadata || {}).length;
+  const tagCount = Object.keys(effectiveMetadata(file)).length;
   const originalTagCount = Object.keys(file.original_metadata || {}).length;
-  const diff = summarizeMetadataDiff(file.metadata || {}, file.original_metadata || {});
+  const diff = summarizeMetadataDiff(
+    effectiveMetadata(file),
+    file.original_metadata || {},
+  );
   selectedTitle.textContent = file.name;
   selectedHint.textContent = `${tagCount} current tags · ${originalTagCount} original tags · ${diff.changed + diff.added + diff.removed} differences`;
   renderComparisonSummary(file);
@@ -399,7 +630,7 @@ async function selectFile(fileId) {
       state.files[index] = file;
     }
 
-    state.metadataEntries = normalizeMetadata(file.metadata);
+    state.metadataEntries = normalizeMetadata(effectiveMetadata(file));
     updateSelectionHeader(file);
     setButtonsEnabled(true);
     renderMetadataRows();
@@ -469,7 +700,7 @@ function selectedTags() {
 }
 
 function collectUpdates() {
-  const updates = {};
+  const updates = { ...(state.pendingTagUpdates[state.selectedFileId] || {}) };
 
   document.querySelectorAll(".tag-value").forEach((input) => {
     const tag = decodeURIComponent(input.dataset.tag);
@@ -482,6 +713,44 @@ function collectUpdates() {
   });
 
   return updates;
+}
+
+function addNewTagRow() {
+  const tag = newTagName.value.trim();
+  const value = newTagValue.value;
+
+  if (!tag) {
+    setStatus("Enter a tag name first.", "error");
+    newTagName.focus();
+    return;
+  }
+
+  if (!/^[A-Za-z0-9_.:-]+$/.test(tag)) {
+    setStatus("Tag names may only contain letters, numbers, _, ., :, or -.", "error");
+    newTagName.focus();
+    return;
+  }
+
+  const file = currentFile();
+  const existingMetadata = effectiveMetadata(file);
+  const existing = Object.prototype.hasOwnProperty.call(existingMetadata, tag);
+  if (existing) {
+    setStatus(`The tag "${tag}" already exists. Edit its value in the table.`, "error");
+    return;
+  }
+
+  state.pendingTagUpdates[file.id] = {
+    ...(state.pendingTagUpdates[file.id] || {}),
+    [tag]: value,
+  };
+  state.metadataEntries = normalizeMetadata(effectiveMetadata(file));
+  renderComparisonSummary(file);
+  renderMetadataRows();
+
+  newTagName.value = "";
+  newTagValue.value = "";
+  setStatus(`Added "${tag}" to pending changes. Click Save Changes to write it to the file.`, "success");
+  newTagName.focus();
 }
 
 async function applyAction(url, body, successMessage) {
@@ -506,6 +775,7 @@ async function applyAction(url, body, successMessage) {
       state.files[index] = updated;
     }
 
+    delete state.pendingTagUpdates[updated.id];
     state.metadataEntries = normalizeMetadata(updated.metadata);
     updateSelectionHeader(updated);
     renderFileList();
@@ -593,6 +863,7 @@ async function applyBatchAction(url, body, successMessage) {
         if (index >= 0) {
           state.files[index] = updated;
         }
+        delete state.pendingTagUpdates[updated.id];
         warnings.push(...(payload.warnings || []));
       } catch (error) {
         errors.push(`${fileId}: ${error.message}`);
@@ -649,11 +920,6 @@ async function applyPrivacyPreset() {
   }
 
   const presetName = presetSelect.options[presetSelect.selectedIndex].text;
-  const confirmed = window.confirm(`Apply "${presetName}" to ${fileIds.length} file(s)?`);
-  if (!confirmed) {
-    return;
-  }
-
   await applyBatchAction(
     "/api/files/batch/preset",
     { file_ids: fileIds, preset },
@@ -699,11 +965,6 @@ removeAllBtn.addEventListener("click", async () => {
   const fileIds = getActionFileIds();
   if (fileIds.length === 0) {
     setStatus("Select a file first.", "error");
-    return;
-  }
-
-  const confirmed = window.confirm(`Remove all writable metadata from ${fileIds.length} selected file(s)?`);
-  if (!confirmed) {
     return;
   }
 
@@ -755,15 +1016,66 @@ saveUpdatesBtn.addEventListener("click", async () => {
   }
 });
 
+addTagBtn.addEventListener("click", addNewTagRow);
+tagInfoBtn.addEventListener("click", () => setTagInfoModal(true));
+closeTagInfoBtn.addEventListener("click", () => setTagInfoModal(false));
+tagInfoModal.addEventListener("click", (event) => {
+  if (event.target === tagInfoModal) {
+    setTagInfoModal(false);
+  }
+});
+tagReferenceSearch.addEventListener("input", resetTagReferencePage);
+tagReferenceGroup.addEventListener("change", resetTagReferencePage);
+tagReferenceWritable.addEventListener("change", resetTagReferencePage);
+tagReferencePrevious.addEventListener("click", () => {
+  if (tagReference.page > 1) {
+    tagReference.page -= 1;
+    loadTagReference();
+  }
+});
+tagReferenceNext.addEventListener("click", () => {
+  const query = tagReferenceSearch.value.trim().toLowerCase();
+  const group = tagReferenceGroup.value;
+  const writableOnly = tagReferenceWritable.checked;
+  const matchingCount = tagReference.items.filter((item) => {
+    if (group && item.group !== group) {
+      return false;
+    }
+    if (writableOnly && !item.writable) {
+      return false;
+    }
+    return !query || [item.name, item.description, item.group, item.value_type]
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  }).length;
+  const pageCount = Math.max(1, Math.ceil(matchingCount / tagReference.pageSize));
+  if (tagReference.page < pageCount) {
+    tagReference.page += 1;
+    loadTagReference();
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !tagInfoModal.hidden) {
+    setTagInfoModal(false);
+  }
+});
+
+newTagName.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    addNewTagRow();
+  }
+});
+newTagValue.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    addNewTagRow();
+  }
+});
+
 resetBtn.addEventListener("click", async () => {
   const fileIds = getActionFileIds();
   if (fileIds.length === 0) {
     setStatus("Select a file first.", "error");
-    return;
-  }
-
-  const confirmed = window.confirm(`Reset ${fileIds.length} selected file(s) to their original uploaded state?`);
-  if (!confirmed) {
     return;
   }
 

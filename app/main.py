@@ -360,6 +360,8 @@ class ExifToolService:
             command,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         warnings = [line.strip() for line in completed.stderr.splitlines() if line.strip()]

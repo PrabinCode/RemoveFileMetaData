@@ -9,6 +9,7 @@ It supports:
 - Removing all writable metadata in one click
 - Removing only selected tags
 - Updating selected tag values
+- Adding new metadata tags and values, then saving them with **Save Changes**
 - Applying batch actions across multiple files at once
 - Resetting files back to their original uploaded state
 - Comparing current metadata against the original file state
@@ -16,6 +17,9 @@ It supports:
 - Applying privacy presets for location, personal, device, and timestamp data
 - Downloading all selected processed files as a ZIP archive
 - Showing file-type and metadata capability indicators
+- Providing an in-app metadata tag guide with example values and tag meanings
+- Loading the complete installed ExifTool tag reference independently of uploaded files
+- Bundling the tag reference in the project with client-side pagination and search
 - Downloading the processed file
 - Handling common image, video, document, and PDF formats through ExifTool
 
@@ -80,6 +84,28 @@ Open:
    - **Remove Selected Tags**
    - **Save Edited Values**
 6. Click **Download Current File**.
+
+To add a tag, enter its name and value in the **New tag name** and **New tag
+value** fields, then click **Add Tag**. The tag is shown immediately as an
+added pending change and remains available if you select another file. Click
+**Save Changes** to write it to the working file. Click **Download** afterward
+to download the saved working copy. If you leave the page or reload it before
+saving, pending changes are lost.
+
+Click the **!** icon beside the title to open the metadata tag guide. It lists
+the complete tag database from the installed ExifTool, including tag names,
+descriptions, metadata groups, value types, contextual example values, and
+writable status. Specialized or read-only tags are labeled as format-specific
+instead of being given a misleading generic value. Use the search, group filter, and **Writable only** filter to find
+tags without selecting a file. Availability and write support still depend on
+the file format and ExifTool.
+
+The complete tag reference is stored in
+[`app/static/tag-reference.json`](./app/static/tag-reference.json), generated
+from the local ExifTool database. The application does not call an external
+tag-reference service or rebuild the reference at runtime. The guide loads
+this bundled file once, then performs searching, filtering, and 50-result
+pagination locally in the browser.
 
 For multiple files, select the file checkboxes and use the batch actions. The
 privacy preset menu removes common sensitive metadata groups without requiring

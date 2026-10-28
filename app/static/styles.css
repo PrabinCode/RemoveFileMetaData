@@ -28,6 +28,10 @@ body {
   font-family: "Space Grotesk", "Avenir Next", "Trebuchet MS", sans-serif;
 }
 
+body.modal-open {
+  overflow: hidden;
+}
+
 .ambient {
   position: fixed;
   z-index: -1;
@@ -70,6 +74,182 @@ body {
   line-height: 1.04;
   font-size: clamp(1.6rem, 3vw, 2.7rem);
   letter-spacing: -0.04em;
+}
+
+.info-button {
+  width: 1.65rem;
+  height: 1.65rem;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  color: var(--accent);
+  border-color: rgba(45, 212, 191, 0.55);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(3, 7, 12, 0.78);
+  backdrop-filter: blur(7px);
+}
+
+.modal-backdrop[hidden] {
+  display: none;
+}
+
+.info-modal {
+  width: min(1120px, 100%);
+  max-height: min(88vh, 820px);
+  overflow: hidden;
+  padding: 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.modal-head h2 {
+  margin-bottom: 0;
+}
+
+.modal-head .eyebrow {
+  margin-bottom: 0.25rem;
+}
+
+.modal-close {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.info-notice {
+  margin: 0.8rem 0;
+  padding: 0.7rem 0.8rem;
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: rgba(45, 212, 191, 0.08);
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.info-notice strong {
+  color: var(--ink);
+}
+
+.tag-reference-tools {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) minmax(10rem, 0.4fr) auto minmax(8rem, auto);
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.8rem 0;
+}
+
+.tag-reference-tools input[type="search"],
+.tag-reference-tools select {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  background: var(--surface-raised);
+  color: var(--ink);
+  font: inherit;
+}
+
+.tag-reference-tools label {
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.tag-guide-wrap {
+  max-height: 52vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.tag-guide {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.tag-guide th,
+.tag-guide td {
+  padding: 0.58rem 0.65rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.tag-guide th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-raised);
+  color: var(--accent);
+}
+
+.tag-guide td:first-child {
+  color: var(--ink);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.tag-guide td:nth-child(2) {
+  color: #b6c4d4;
+}
+
+.tag-guide td:nth-child(5) {
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.tag-guide .writable {
+  color: var(--accent);
+}
+
+.tag-guide .read-only {
+  color: var(--accent-2);
+}
+
+.tag-reference-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.8rem;
+  margin-top: 0.7rem;
+}
+
+.tag-reference-pagination .muted {
+  min-width: 7rem;
+  margin: 0;
+  text-align: center;
+}
+
+.modal-footnote {
+  margin: 0.8rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.modal-footnote code {
+  color: var(--accent-2);
 }
 
 .eyebrow {
@@ -197,6 +377,7 @@ button.danger {
   padding: 0;
   max-height: 55vh;
   overflow: auto;
+  overflow-x: hidden;
   display: grid;
   gap: 0.35rem;
 }
@@ -209,8 +390,9 @@ button.danger {
   cursor: pointer;
   display: grid;
   gap: 0.3rem;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: center;
+  min-width: 0;
 }
 
 .file-list li.active {
@@ -224,9 +406,29 @@ button.danger {
   accent-color: var(--accent);
 }
 
+.file-number {
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 6px;
+  background: rgba(45, 212, 191, 0.1);
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
 .file-list .file-main {
   display: grid;
   gap: 0.15rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.file-list .file-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-list .meta {
@@ -235,14 +437,17 @@ button.danger {
 }
 
 .file-type-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 1.45rem;
+  height: 1.45rem;
   border-radius: 999px;
-  padding: 0.18rem 0.5rem;
-  font-size: 0.72rem;
+  padding: 0;
+  font-size: 0.82rem;
   font-weight: 700;
-  letter-spacing: 0.02em;
   background: rgba(45, 212, 191, 0.1);
   color: var(--accent);
-  text-transform: uppercase;
+  cursor: help;
 }
 
 .file-badges {
@@ -250,15 +455,22 @@ button.danger {
   align-items: center;
   gap: 0.25rem;
   justify-content: flex-end;
+  min-width: 0;
+  flex-shrink: 0;
 }
 
 .capability-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 1.45rem;
+  height: 1.45rem;
   border-radius: 999px;
-  padding: 0.18rem 0.4rem;
+  padding: 0;
   color: var(--muted);
   background: rgba(148, 163, 184, 0.12);
-  font-size: 0.65rem;
+  font-size: 0.78rem;
   font-weight: 700;
+  cursor: help;
 }
 
 .panel-head {
@@ -342,6 +554,30 @@ button.danger {
   border-radius: 9px;
   color: var(--muted);
   font-size: 0.78rem;
+}
+
+.new-tag-bar {
+  display: grid;
+  grid-template-columns: minmax(9rem, 0.35fr) minmax(12rem, 1fr) auto;
+  gap: 0.4rem;
+  margin: 0.55rem 0;
+}
+
+.new-tag-bar input {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.42rem 0.55rem;
+  background: var(--surface-raised);
+  color: var(--ink);
+}
+
+.new-tag-bar input::placeholder {
+  color: #718096;
+}
+
+.new-tag-row {
+  background: rgba(45, 212, 191, 0.08);
 }
 
 .comparison-item {
@@ -490,7 +726,7 @@ td.value {
 
 @media (max-width: 980px) {
   .hero {
-    display: block;
+    align-items: center;
   }
 
   .eyebrow {
@@ -512,5 +748,33 @@ td.value {
 
   .search-wrap {
     min-width: 0;
+  }
+
+  .new-tag-bar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .new-tag-bar button {
+    grid-column: 1 / -1;
+  }
+
+  .tag-reference-tools {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .tag-reference-tools label,
+  .tag-reference-tools .muted {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 520px) {
+  .file-list li {
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
+
+  .file-badges {
+    grid-column: 3;
+    justify-content: flex-start;
   }
 }
