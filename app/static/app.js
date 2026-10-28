@@ -19,11 +19,6 @@ const removeSelectedBtn = document.getElementById("removeSelectedBtn");
 const saveUpdatesBtn = document.getElementById("saveUpdatesBtn");
 const resetBtn = document.getElementById("resetBtn");
 const downloadBtn = document.getElementById("downloadBtn");
-const batchRemoveAllBtn = document.getElementById("batchRemoveAllBtn");
-const batchRemoveSelectedBtn = document.getElementById("batchRemoveSelectedBtn");
-const batchSaveUpdatesBtn = document.getElementById("batchSaveUpdatesBtn");
-const batchResetBtn = document.getElementById("batchResetBtn");
-const batchDownloadBtn = document.getElementById("batchDownloadBtn");
 const selectAllFilesBtn = document.getElementById("selectAllFilesBtn");
 const clearSelectionBtn = document.getElementById("clearSelectionBtn");
 const statusBar = document.getElementById("statusBar");
@@ -70,14 +65,8 @@ function setButtonsEnabled(enabled) {
   downloadBtn.disabled = !enabled;
   selectAllFilesBtn.disabled = !enabled || state.files.length === 0;
   clearSelectionBtn.disabled = !enabled || state.selectedBatchIds.length === 0;
-  const batchCount = state.selectedBatchIds.length || state.files.length;
-  batchRemoveAllBtn.disabled = !enabled || batchCount < 2;
-  batchRemoveSelectedBtn.disabled = !enabled || batchCount < 2;
-  batchSaveUpdatesBtn.disabled = !enabled || batchCount < 2;
-  batchResetBtn.disabled = !enabled || batchCount < 2;
-  batchDownloadBtn.disabled = !enabled || batchCount < 1;
-  presetSelect.disabled = !enabled || batchCount < 1;
-  applyPresetBtn.disabled = !enabled || batchCount < 1;
+  presetSelect.disabled = !enabled || getActionFileIds().length === 0;
+  applyPresetBtn.disabled = !enabled || getActionFileIds().length === 0;
 }
 
 async function requestJson(url, options = {}) {
@@ -252,7 +241,16 @@ function getSelectedBatchIds() {
     return [...state.selectedBatchIds];
   }
 
-  return state.files.map((file) => file.id);
+  return [];
+}
+
+function getActionFileIds() {
+  const selectedIds = getSelectedBatchIds();
+  if (selectedIds.length > 0) {
+    return selectedIds;
+  }
+
+  return state.selectedFileId ? [state.selectedFileId] : [];
 }
 
 function renderFileList() {
@@ -532,7 +530,7 @@ async function applyBatchAction(url, body, successMessage) {
     return;
   }
 
-  const fileIds = getSelectedBatchIds();
+  const fileIds = getActionFileIds();
   const presetTags = {
     location: [
       "GPSLatitude", "GPSLongitude", "GPSAltitude", "GPSPosition",
@@ -577,11 +575,6 @@ async function applyBatchAction(url, body, successMessage) {
   batchProgress.hidden = false;
   progressLabel.textContent = `Processing 0 of ${fileIds.length} selected files...`;
   progressBar.style.width = "0%";
-  batchRemoveAllBtn.disabled = true;
-  batchRemoveSelectedBtn.disabled = true;
-  batchSaveUpdatesBtn.disabled = true;
-  batchResetBtn.disabled = true;
-  batchDownloadBtn.disabled = true;
   applyPresetBtn.disabled = true;
 
   try {
@@ -645,7 +638,7 @@ async function applyBatchAction(url, body, successMessage) {
 
 async function applyPrivacyPreset() {
   const preset = presetSelect.value;
-  const fileIds = getSelectedBatchIds();
+  const fileIds = getActionFileIds();
   if (!preset) {
     setStatus("Choose a privacy preset first.", "error");
     return;
@@ -670,13 +663,12 @@ async function applyPrivacyPreset() {
 }
 
 async function downloadBatchFiles() {
-  const fileIds = getSelectedBatchIds();
+  const fileIds = getActionFileIds();
   if (fileIds.length === 0) {
     setStatus("Select at least one file to download.", "error");
     return;
   }
 
-  batchDownloadBtn.disabled = true;
   setStatus(`Preparing ZIP download for ${fileIds.length} file(s)...`);
   try {
     const response = await fetch("/api/files/batch/download", {
@@ -704,49 +696,28 @@ async function downloadBatchFiles() {
 }
 
 removeAllBtn.addEventListener("click", async () => {
-  const file = currentFile();
-  if (!file) {
+  const fileIds = getActionFileIds();
+  if (fileIds.length === 0) {
+    setStatus("Select a file first.", "error");
     return;
   }
 
-  const confirmed = window.confirm(
-    `Remove all writable metadata from ${file.name}? This updates the in-session working copy.`,
-  );
+  const confirmed = window.confirm(`Remove all writable metadata from ${fileIds.length} selected file(s)?`);
   if (!confirmed) {
     return;
   }
 
-  await applyAction(
-    `/api/files/${file.id}/remove_all`,
-    {},
-    "All writable metadata removed.",
-  );
-});
-
-batchRemoveAllBtn.addEventListener("click", async () => {
-  const fileIds = getSelectedBatchIds();
-  if (fileIds.length < 2) {
-    setStatus("Select at least two files for batch processing.", "error");
-    return;
+  if (fileIds.length === 1) {
+    await applyAction(`/api/files/${fileIds[0]}/remove_all`, {}, "All writable metadata removed.");
+  } else {
+    await applyBatchAction("/api/files/batch/remove_all", { file_ids: fileIds }, "All writable metadata removed.");
   }
-
-  const confirmed = window.confirm(
-    `Remove all writable metadata from ${fileIds.length} selected files?`,
-  );
-  if (!confirmed) {
-    return;
-  }
-
-  await applyBatchAction(
-    "/api/files/batch/remove_all",
-    { file_ids: fileIds },
-    "All writable metadata removed from the selected files.",
-  );
 });
 
 removeSelectedBtn.addEventListener("click", async () => {
-  const file = currentFile();
-  if (!file) {
+  const fileIds = getActionFileIds();
+  if (fileIds.length === 0) {
+    setStatus("Select a file first.", "error");
     return;
   }
 
@@ -756,39 +727,17 @@ removeSelectedBtn.addEventListener("click", async () => {
     return;
   }
 
-  await applyAction(
-    `/api/files/${file.id}/remove_selected`,
-    { tags },
-    `Removed ${tags.length} selected tag(s).`,
-  );
-});
-
-batchRemoveSelectedBtn.addEventListener("click", async () => {
-  const fileIds = getSelectedBatchIds();
-  if (fileIds.length < 2) {
-    setStatus("Select at least two files for batch processing.", "error");
-    return;
+  if (fileIds.length === 1) {
+    await applyAction(`/api/files/${fileIds[0]}/remove_selected`, { tags }, `Removed ${tags.length} selected tag(s).`);
+  } else {
+    await applyBatchAction("/api/files/batch/remove_selected", { file_ids: fileIds, tags }, `Removed ${tags.length} selected tag(s) across all selected files.`);
   }
-
-  const tags = selectedTags();
-  if (tags.length === 0) {
-    setStatus("Select at least one tag to remove from the current file before batch processing.", "error");
-    return;
-  }
-
-  await applyBatchAction(
-    "/api/files/batch/remove_selected",
-    {
-      file_ids: fileIds,
-      tags,
-    },
-    `Removed ${tags.length} selected tag(s) across all selected files.`,
-  );
 });
 
 saveUpdatesBtn.addEventListener("click", async () => {
-  const file = currentFile();
-  if (!file) {
+  const fileIds = getActionFileIds();
+  if (fileIds.length === 0) {
+    setStatus("Select a file first.", "error");
     return;
   }
 
@@ -799,82 +748,48 @@ saveUpdatesBtn.addEventListener("click", async () => {
     return;
   }
 
-  await applyAction(
-    `/api/files/${file.id}/update_tags`,
-    { updates },
-    `Updated ${count} tag value(s).`,
-  );
-});
-
-batchSaveUpdatesBtn.addEventListener("click", async () => {
-  const fileIds = getSelectedBatchIds();
-  if (fileIds.length < 2) {
-    setStatus("Select at least two files for batch processing.", "error");
-    return;
+  if (fileIds.length === 1) {
+    await applyAction(`/api/files/${fileIds[0]}/update_tags`, { updates }, `Updated ${count} tag value(s).`);
+  } else {
+    await applyBatchAction("/api/files/batch/update_tags", { file_ids: fileIds, updates }, `Updated ${count} tag value(s) across all selected files.`);
   }
-
-  const updates = collectUpdates();
-  const count = Object.keys(updates).length;
-  if (count === 0) {
-    setStatus("No edited values found in the current file.", "error");
-    return;
-  }
-
-  await applyBatchAction(
-    "/api/files/batch/update_tags",
-    {
-      file_ids: fileIds,
-      updates,
-    },
-    `Updated ${count} tag value(s) across all selected files.`,
-  );
 });
 
 resetBtn.addEventListener("click", async () => {
-  const file = currentFile();
-  if (!file) {
+  const fileIds = getActionFileIds();
+  if (fileIds.length === 0) {
+    setStatus("Select a file first.", "error");
     return;
   }
 
-  await applyAction(
-    `/api/files/${file.id}/reset`,
-    {},
-    "Working copy reset to original upload.",
-  );
-});
-
-batchResetBtn.addEventListener("click", async () => {
-  const fileIds = getSelectedBatchIds();
-  if (fileIds.length < 2) {
-    setStatus("Select at least two files for batch processing.", "error");
-    return;
-  }
-
-  const confirmed = window.confirm(
-    `Reset ${fileIds.length} selected files to their original uploaded state?`,
-  );
+  const confirmed = window.confirm(`Reset ${fileIds.length} selected file(s) to their original uploaded state?`);
   if (!confirmed) {
     return;
   }
 
-  await applyBatchAction(
-    "/api/files/batch/reset",
-    { file_ids: fileIds },
-    "All selected files were reset to their original state.",
-  );
+  if (fileIds.length === 1) {
+    await applyAction(`/api/files/${fileIds[0]}/reset`, {}, "Working copy reset to original upload.");
+  } else {
+    await applyBatchAction("/api/files/batch/reset", { file_ids: fileIds }, "All selected files were reset to their original state.");
+  }
 });
 
-downloadBtn.addEventListener("click", () => {
-  const file = currentFile();
-  if (!file) {
+downloadBtn.addEventListener("click", async () => {
+  const fileIds = getActionFileIds();
+  if (fileIds.length === 0) {
+    setStatus("Select a file first.", "error");
     return;
   }
 
-  window.location.href = `/api/files/${file.id}/download`;
-  setStatus("Downloaded current working copy.", "success");
+  if (fileIds.length === 1) {
+    window.location.href = `/api/files/${fileIds[0]}/download`;
+    setStatus("Downloaded current working copy.", "success");
+    return;
+  }
+
+  await downloadBatchFiles();
 });
 
-batchDownloadBtn.addEventListener("click", downloadBatchFiles);
 applyPresetBtn.addEventListener("click", applyPrivacyPreset);
 showChangesOnly.addEventListener("change", renderMetadataRows);
 
