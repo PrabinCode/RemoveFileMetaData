@@ -1,6 +1,6 @@
 # Local Metadata Inspector
 
-A local-first web app to inspect and modify metadata in images, videos, and PDFs.
+A local-first web app to inspect and modify metadata in images, videos, PDFs, and common document files.
 
 It supports:
 
@@ -9,7 +9,15 @@ It supports:
 - Removing all writable metadata in one click
 - Removing only selected tags
 - Updating selected tag values
+- Applying batch actions across multiple files at once
+- Resetting files back to their original uploaded state
+- Comparing current metadata against the original file state
+- Showing detailed added, removed, and changed metadata values
+- Applying privacy presets for location, personal, device, and timestamp data
+- Downloading all selected processed files as a ZIP archive
+- Showing file-type and metadata capability indicators
 - Downloading the processed file
+- Handling common image, video, document, and PDF formats through ExifTool
 
 ## 1. Prerequisites
 
@@ -72,6 +80,11 @@ Open:
    - **Remove Selected Tags**
    - **Save Edited Values**
 6. Click **Download Current File**.
+
+For multiple files, select the file checkboxes and use the batch actions. The
+privacy preset menu removes common sensitive metadata groups without requiring
+you to know individual ExifTool tag names. Use **Download ZIP** to download all
+selected working copies together.
 
 ## Notes
 

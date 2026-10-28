@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -18,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 
 SESSION_TTL = timedelta(hours=6)
 TAG_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]+$")
@@ -31,6 +33,7 @@ class FileSummary(BaseModel):
     content_type: Optional[str]
     size_bytes: int
     metadata: dict[str, Any]
+    original_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class InspectResponse(BaseModel):
@@ -49,10 +52,43 @@ class TagUpdateRequest(BaseModel):
     updates: dict[str, str] = Field(default_factory=dict)
 
 
+class BatchFileRequest(BaseModel):
+    file_ids: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    updates: dict[str, str] = Field(default_factory=dict)
+    preset: Optional[str] = None
+
+
 class ActionResponse(BaseModel):
     message: str
     warnings: list[str] = Field(default_factory=list)
     file: FileSummary
+
+
+class BatchActionResponse(BaseModel):
+    message: str
+    warnings: list[str] = Field(default_factory=list)
+    files: list[FileSummary] = Field(default_factory=list)
+
+
+PRIVACY_PRESETS: dict[str, list[str]] = {
+    "location": [
+        "GPSLatitude", "GPSLongitude", "GPSAltitude", "GPSPosition",
+        "GPSDateStamp", "GPSTimeStamp", "GPSImgDirection", "GPSDestBearing",
+    ],
+    "personal": [
+        "Artist", "Author", "Creator", "By-line", "By-lineTitle",
+        "OwnerName", "Copyright", "Comment", "Description",
+    ],
+    "device": [
+        "Make", "Model", "SerialNumber", "CameraSerialNumber",
+        "LensModel", "LensSerialNumber", "Software", "HostComputer",
+    ],
+    "timestamps": [
+        "DateTimeOriginal", "CreateDate", "ModifyDate", "FileModifyDate",
+        "FileCreateDate", "FileAccessDate", "MetadataDate",
+    ],
+}
 
 
 @dataclass
@@ -462,6 +498,7 @@ async def inspect_files(files: list[UploadFile] = File(...)) -> InspectResponse:
     for upload in files:
         item = await store.add_upload(upload)
         metadata = exiftool.read_metadata(item.working_path)
+        original_metadata = exiftool.read_metadata(item.source_path)
         summaries.append(
             FileSummary(
                 id=item.id,
@@ -469,6 +506,7 @@ async def inspect_files(files: list[UploadFile] = File(...)) -> InspectResponse:
                 content_type=item.content_type,
                 size_bytes=item.size_bytes,
                 metadata=metadata,
+                original_metadata=original_metadata,
             )
         )
 
@@ -482,6 +520,7 @@ def get_file_metadata(file_id: str) -> MetadataResponse:
 
     item = store.get(file_id)
     metadata = exiftool.read_metadata(item.working_path)
+    original_metadata = exiftool.read_metadata(item.source_path)
     return MetadataResponse(
         file=FileSummary(
             id=item.id,
@@ -489,6 +528,7 @@ def get_file_metadata(file_id: str) -> MetadataResponse:
             content_type=item.content_type,
             size_bytes=item.size_bytes,
             metadata=metadata,
+            original_metadata=original_metadata,
         )
     )
 
@@ -501,6 +541,7 @@ def remove_all_metadata(file_id: str) -> ActionResponse:
     item = store.get(file_id)
     warnings = exiftool.remove_all(item.working_path)
     metadata = exiftool.read_metadata(item.working_path)
+    original_metadata = exiftool.read_metadata(item.source_path)
 
     return ActionResponse(
         message="All writable metadata removed.",
@@ -511,6 +552,7 @@ def remove_all_metadata(file_id: str) -> ActionResponse:
             content_type=item.content_type,
             size_bytes=item.size_bytes,
             metadata=metadata,
+            original_metadata=original_metadata,
         ),
     )
 
@@ -523,6 +565,7 @@ def remove_selected_metadata(file_id: str, request: TagRemoveRequest) -> ActionR
     item = store.get(file_id)
     warnings = exiftool.remove_selected(item.working_path, request.tags)
     metadata = exiftool.read_metadata(item.working_path)
+    original_metadata = exiftool.read_metadata(item.source_path)
 
     return ActionResponse(
         message="Selected tags removed.",
@@ -533,6 +576,7 @@ def remove_selected_metadata(file_id: str, request: TagRemoveRequest) -> ActionR
             content_type=item.content_type,
             size_bytes=item.size_bytes,
             metadata=metadata,
+            original_metadata=original_metadata,
         ),
     )
 
@@ -545,6 +589,7 @@ def update_selected_tags(file_id: str, request: TagUpdateRequest) -> ActionRespo
     item = store.get(file_id)
     warnings = exiftool.update_tags(item.working_path, request.updates)
     metadata = exiftool.read_metadata(item.working_path)
+    original_metadata = exiftool.read_metadata(item.source_path)
 
     return ActionResponse(
         message="Selected tag values updated.",
@@ -555,7 +600,242 @@ def update_selected_tags(file_id: str, request: TagUpdateRequest) -> ActionRespo
             content_type=item.content_type,
             size_bytes=item.size_bytes,
             metadata=metadata,
+            original_metadata=original_metadata,
         ),
+    )
+
+
+def _dedupe_file_ids(file_ids: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+
+    for file_id in file_ids:
+        if not file_id or file_id in seen:
+            continue
+        seen.add(file_id)
+        ordered.append(file_id)
+
+    return ordered
+
+
+@app.post("/api/files/batch/remove_all", response_model=BatchActionResponse)
+def batch_remove_all_metadata(request: BatchFileRequest) -> BatchActionResponse:
+    store.cleanup()
+    exiftool.ensure_available()
+
+    file_ids = _dedupe_file_ids(request.file_ids)
+    if not file_ids:
+        raise HTTPException(status_code=400, detail="No files were selected for batch processing.")
+
+    summaries: list[FileSummary] = []
+    warnings: list[str] = []
+
+    for file_id in file_ids:
+        item = store.get(file_id)
+        warnings.extend(exiftool.remove_all(item.working_path))
+        metadata = exiftool.read_metadata(item.working_path)
+        original_metadata = exiftool.read_metadata(item.source_path)
+        summaries.append(
+            FileSummary(
+                id=item.id,
+                name=item.original_name,
+                content_type=item.content_type,
+                size_bytes=item.size_bytes,
+                metadata=metadata,
+                original_metadata=original_metadata,
+            )
+        )
+
+    return BatchActionResponse(
+        message="Metadata removed from all selected files.",
+        warnings=warnings,
+        files=summaries,
+    )
+
+
+@app.post("/api/files/batch/remove_selected", response_model=BatchActionResponse)
+def batch_remove_selected_metadata(request: BatchFileRequest) -> BatchActionResponse:
+    store.cleanup()
+    exiftool.ensure_available()
+
+    file_ids = _dedupe_file_ids(request.file_ids)
+    if not file_ids:
+        raise HTTPException(status_code=400, detail="No files were selected for batch processing.")
+    if not request.tags:
+        raise HTTPException(status_code=400, detail="No tags were provided.")
+
+    summaries: list[FileSummary] = []
+    warnings: list[str] = []
+
+    for file_id in file_ids:
+        item = store.get(file_id)
+        warnings.extend(exiftool.remove_selected(item.working_path, request.tags))
+        metadata = exiftool.read_metadata(item.working_path)
+        original_metadata = exiftool.read_metadata(item.source_path)
+        summaries.append(
+            FileSummary(
+                id=item.id,
+                name=item.original_name,
+                content_type=item.content_type,
+                size_bytes=item.size_bytes,
+                metadata=metadata,
+                original_metadata=original_metadata,
+            )
+        )
+
+    return BatchActionResponse(
+        message="Selected tags removed from all selected files.",
+        warnings=warnings,
+        files=summaries,
+    )
+
+
+@app.post("/api/files/batch/update_tags", response_model=BatchActionResponse)
+def batch_update_selected_tags(request: BatchFileRequest) -> BatchActionResponse:
+    store.cleanup()
+    exiftool.ensure_available()
+
+    file_ids = _dedupe_file_ids(request.file_ids)
+    if not file_ids:
+        raise HTTPException(status_code=400, detail="No files were selected for batch processing.")
+    if not request.updates:
+        raise HTTPException(status_code=400, detail="No updates were provided.")
+
+    summaries: list[FileSummary] = []
+    warnings: list[str] = []
+
+    for file_id in file_ids:
+        item = store.get(file_id)
+        warnings.extend(exiftool.update_tags(item.working_path, request.updates))
+        metadata = exiftool.read_metadata(item.working_path)
+        original_metadata = exiftool.read_metadata(item.source_path)
+        summaries.append(
+            FileSummary(
+                id=item.id,
+                name=item.original_name,
+                content_type=item.content_type,
+                size_bytes=item.size_bytes,
+                metadata=metadata,
+                original_metadata=original_metadata,
+            )
+        )
+
+    return BatchActionResponse(
+        message="Selected tag values updated in all selected files.",
+        warnings=warnings,
+        files=summaries,
+    )
+
+
+@app.post("/api/files/batch/reset", response_model=BatchActionResponse)
+def batch_reset_files(request: BatchFileRequest) -> BatchActionResponse:
+    store.cleanup()
+    exiftool.ensure_available()
+
+    file_ids = _dedupe_file_ids(request.file_ids)
+    if not file_ids:
+        raise HTTPException(status_code=400, detail="No files were selected for batch processing.")
+
+    summaries: list[FileSummary] = []
+
+    for file_id in file_ids:
+        item = store.get(file_id)
+        shutil.copy2(item.source_path, item.working_path)
+        metadata = exiftool.read_metadata(item.working_path)
+        original_metadata = exiftool.read_metadata(item.source_path)
+        summaries.append(
+            FileSummary(
+                id=item.id,
+                name=item.original_name,
+                content_type=item.content_type,
+                size_bytes=item.size_bytes,
+                metadata=metadata,
+                original_metadata=original_metadata,
+            )
+        )
+
+    return BatchActionResponse(
+        message="All selected files were reset to their original state.",
+        warnings=[],
+        files=summaries,
+    )
+
+
+@app.post("/api/files/batch/preset", response_model=BatchActionResponse)
+def batch_apply_privacy_preset(request: BatchFileRequest) -> BatchActionResponse:
+    store.cleanup()
+    exiftool.ensure_available()
+
+    file_ids = _dedupe_file_ids(request.file_ids)
+    if not file_ids:
+        raise HTTPException(status_code=400, detail="No files were selected for batch processing.")
+    if request.preset == "all":
+        tags = []
+    elif request.preset in PRIVACY_PRESETS:
+        tags = PRIVACY_PRESETS[request.preset]
+    else:
+        raise HTTPException(status_code=400, detail="Unknown privacy preset.")
+
+    summaries: list[FileSummary] = []
+    warnings: list[str] = []
+
+    for file_id in file_ids:
+        item = store.get(file_id)
+        if request.preset == "all":
+            warnings.extend(exiftool.remove_all(item.working_path))
+        else:
+            warnings.extend(exiftool.remove_selected(item.working_path, tags))
+        metadata = exiftool.read_metadata(item.working_path)
+        original_metadata = exiftool.read_metadata(item.source_path)
+        summaries.append(
+            FileSummary(
+                id=item.id,
+                name=item.original_name,
+                content_type=item.content_type,
+                size_bytes=item.size_bytes,
+                metadata=metadata,
+                original_metadata=original_metadata,
+            )
+        )
+
+    return BatchActionResponse(
+        message="Privacy preset applied to all selected files.",
+        warnings=warnings,
+        files=summaries,
+    )
+
+
+@app.post("/api/files/batch/download")
+def download_batch_files(request: BatchFileRequest) -> FileResponse:
+    store.cleanup()
+    file_ids = _dedupe_file_ids(request.file_ids)
+    if not file_ids:
+        raise HTTPException(status_code=400, detail="No files were selected for download.")
+
+    archive_path = APP_TEMP_ROOT / f"metadata-cleaned-{uuid.uuid4().hex}.zip"
+    try:
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            used_names: set[str] = set()
+            for file_id in file_ids:
+                item = store.get(file_id)
+                original = Path(item.original_name)
+                base_name = f"{original.stem}_metadata_cleaned{original.suffix}"
+                download_name = base_name
+                suffix = 2
+                while download_name in used_names:
+                    download_name = f"{original.stem}_metadata_cleaned_{suffix}{original.suffix}"
+                    suffix += 1
+                used_names.add(download_name)
+                archive.write(item.working_path, arcname=download_name)
+    except Exception:
+        archive_path.unlink(missing_ok=True)
+        raise
+
+    return FileResponse(
+        path=archive_path,
+        filename="metadata-cleaned-files.zip",
+        media_type="application/zip",
+        background=BackgroundTask(archive_path.unlink, missing_ok=True),
     )
 
 
@@ -568,6 +848,7 @@ def reset_file(file_id: str) -> ActionResponse:
     shutil.copy2(item.source_path, item.working_path)
     metadata = exiftool.read_metadata(item.working_path)
 
+    original_metadata = exiftool.read_metadata(item.source_path)
     return ActionResponse(
         message="File reset to original uploaded state.",
         warnings=[],
@@ -577,6 +858,7 @@ def reset_file(file_id: str) -> ActionResponse:
             content_type=item.content_type,
             size_bytes=item.size_bytes,
             metadata=metadata,
+            original_metadata=original_metadata,
         ),
     )
 

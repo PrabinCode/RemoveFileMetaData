@@ -14,9 +14,6 @@
       <header class="hero reveal">
         <p class="eyebrow">Offline-First Privacy Tool</p>
         <h1>Local Metadata Inspector</h1>
-        <p class="subtitle">
-          View, search, remove, and edit metadata for images, videos, and PDFs directly on your own device.
-        </p>
       </header>
 
       <section class="layout">
@@ -27,8 +24,14 @@
           <label for="fileInput" class="dropzone" id="dropzone">
             <span>Drop files here</span>
             <strong>or click to browse</strong>
+            <small>Supports images, video, PDFs, and common document files</small>
           </label>
-          <input id="fileInput" type="file" multiple />
+          <input id="fileInput" type="file" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,.heic,.heif,.pdf,.mp4,.mov,.avi,.mkv,.wmv,.mp3,.wav,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" />
+
+          <div class="file-toolbar">
+            <button id="selectAllFilesBtn" type="button" class="secondary">Select all loaded</button>
+            <button id="clearSelectionBtn" type="button" class="secondary">Clear selection</button>
+          </div>
 
           <button id="inspectBtn" class="primary">Inspect Files</button>
 
@@ -48,12 +51,45 @@
           </div>
 
           <div class="action-bar">
-            <button id="removeAllBtn" class="danger" disabled>Remove All Metadata</button>
-            <button id="removeSelectedBtn" disabled>Remove Selected Tags</button>
-            <button id="saveUpdatesBtn" disabled>Save Edited Values</button>
+            <button id="removeAllBtn" class="danger" disabled>Remove All</button>
+            <button id="removeSelectedBtn" disabled>Remove Selected</button>
+            <button id="saveUpdatesBtn" disabled>Save Changes</button>
             <button id="resetBtn" disabled>Reset</button>
-            <button id="downloadBtn" class="primary" disabled>Download Current File</button>
+            <button id="downloadBtn" class="primary" disabled>Download</button>
           </div>
+
+          <div class="action-bar">
+            <button id="batchRemoveAllBtn" class="danger" disabled>Remove All Files</button>
+            <button id="batchRemoveSelectedBtn" disabled>Remove Selected Tags</button>
+            <button id="batchSaveUpdatesBtn" disabled>Save All Changes</button>
+            <button id="batchResetBtn" disabled>Reset All</button>
+            <button id="batchDownloadBtn" class="primary" disabled>Download ZIP</button>
+          </div>
+
+          <div class="preset-bar">
+            <label for="presetSelect">Privacy preset</label>
+            <select id="presetSelect" disabled>
+              <option value="">Choose a preset...</option>
+              <option value="all">Remove all metadata</option>
+              <option value="location">Remove location data</option>
+              <option value="personal">Remove author and personal data</option>
+              <option value="device">Remove device and camera data</option>
+              <option value="timestamps">Remove dates and timestamps</option>
+            </select>
+            <button id="applyPresetBtn" class="secondary" disabled>Apply Preset</button>
+          </div>
+
+          <div id="batchProgress" class="batch-progress" hidden>
+            <span class="progress-label">Processing selected files...</span>
+            <span class="progress-track"><span class="progress-bar"></span></span>
+          </div>
+
+          <div id="comparisonSummary" class="comparison-summary">No metadata comparison available yet.</div>
+          <div class="comparison-tools">
+            <strong>Metadata changes</strong>
+            <label><input id="showChangesOnly" type="checkbox" /> Show changes only</label>
+          </div>
+          <div id="comparisonDetails" class="comparison-details">Select a file to see detailed changes.</div>
 
           <div class="table-wrap">
             <table>
